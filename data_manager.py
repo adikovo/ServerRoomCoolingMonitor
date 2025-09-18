@@ -39,6 +39,9 @@ TEMP_LOW_THRESHOLD = 26.0   # °C - Turn OFF relay
 HUMIDITY_HIGH_THRESHOLD = 70.0  # % - Turn ON relay
 HUMIDITY_LOW_THRESHOLD = 65.0   # % - Turn OFF relay
 
+# Manual override configuration
+MANUAL_OVERRIDE_DURATION = 15  # seconds
+
 # Database configuration
 DATABASE_FILE = "server_room_monitor.db"
 
@@ -145,7 +148,7 @@ class DatabaseManager:
                 ''', (timestamp, message))
                 conn.commit()
                 
-            logger.info(f"Stored alarm: {message}")
+            logger.debug(f"Stored alarm: {message}")  
             return True
             
         except Exception as e:
@@ -195,11 +198,15 @@ class ServerRoomDataManager:
         self.is_connected = False
         
         # System state
-        self.relay_status = "OFF"
+        self.relay_status = self._get_last_relay_state()  # Restore from database
         self.last_temperature = None
         self.last_humidity = None
         self.sensor_data_count = 0
         self.alarm_count = 0
+        
+        # Manual override state
+        self.manual_override_active = False
+        self.manual_override_end_time = None
         
         # Database manager
         self.db_manager = DatabaseManager()
@@ -210,6 +217,55 @@ class ServerRoomDataManager:
         self.client.on_message = self._on_message
         self.client.on_subscribe = self._on_subscribe
         self.client.on_publish = self._on_publish
+        
+        # Log initial relay status
+        print(f"🔄 Initial relay status: {self.relay_status}")
+        logger.info(f"Restored relay status from database: {self.relay_status}")
+    
+    def _get_last_relay_state(self) -> str:
+        """
+        Get the last known relay state from database.
+        
+        Returns:
+            Last relay state ("ON" or "OFF"), defaults to "OFF"
+        """
+        try:
+            with sqlite3.connect(DATABASE_FILE) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT message FROM alarms 
+                    WHERE message LIKE '%fan turned%' OR message LIKE '%Manual button toggle%'
+                    ORDER BY timestamp DESC 
+                    LIMIT 1
+                ''')
+                
+                result = cursor.fetchone()
+                if result:
+                    message = result[0].lower()
+                    if 'fan on' in message or 'turned on' in message:
+                        return "ON"
+                    elif 'fan off' in message or 'turned off' in message:
+                        return "OFF"
+                        
+        except Exception as e:
+            logger.warning(f"Could not retrieve relay state from database: {e}")
+            
+        # Default to OFF if no state found
+        return "OFF"
+    
+    def _save_relay_state(self, status: str):
+        """
+        Save current relay state to database for persistence.
+        
+        Args:
+            status: Current relay status ("ON" or "OFF")
+        """
+        try:
+            # This is handled by the existing alarm storage system
+            # No additional storage needed as alarms contain relay state changes
+            pass
+        except Exception as e:
+            logger.error(f"Error saving relay state: {e}")
     
     def _on_connect(self, client, userdata, flags, rc):
         """Callback for when the client receives a CONNACK response from the server."""
@@ -225,6 +281,10 @@ class ServerRoomDataManager:
                     logger.info(f"Subscribed to topic: {topic}")
                 else:
                     logger.error(f"Failed to subscribe to topic: {topic}")
+                    
+            # Publish current relay status to synchronize system
+            self._publish_relay_command(self.relay_status)
+            print(f"   📤 Published initial relay status: {self.relay_status}")
         else:
             logger.error(f"Failed to connect to MQTT broker. Return code: {rc}")
     
@@ -299,7 +359,7 @@ class ServerRoomDataManager:
             else:
                 print(f"   ❌ Failed to store in database")
             
-            # Apply hysteresis logic
+            # Apply hysteresis logic (includes manual override check)
             self._apply_hysteresis_logic(temperature, humidity)
             
         except (json.JSONDecodeError, ValueError, KeyError) as e:
@@ -332,17 +392,63 @@ class ServerRoomDataManager:
             # Publish relay command
             self._publish_relay_command(new_status)
             
+            self._activate_manual_override()
+            
             # Create alarm for manual toggle
-            alarm_message = f"Manual button toggle: Fan {new_status} (was {old_status})"
+            alarm_message = f"Manual button toggle: Fan {new_status} (was {old_status}) - Override active for {MANUAL_OVERRIDE_DURATION}s"
             self._publish_alarm(alarm_message)
             
             # Store alarm in database
             self.db_manager.store_alarm(alarm_message)
             
-            print(f"   🚨 Manual override activated - Fan {new_status}")
+            print(f"   🚨 Manual override: Fan {new_status}")
             
         except Exception as e:
             logger.error(f"Error handling button press: {e}")
+    
+    def _check_manual_override(self) -> bool:
+        """
+        Check if manual override is active.
+        
+        Returns:
+            True if manual override is active, False otherwise
+        """
+        if not self.manual_override_active:
+            return False
+        
+        # Override is active - show remaining time if end time is set
+        if self.manual_override_end_time:
+            current_time = time.time()
+            remaining_time = max(0, int(self.manual_override_end_time - current_time))
+            print(f"   🔒 Manual override active ({remaining_time}s remaining)")
+        else:
+            print(f"   🔒 Manual override active")
+            
+        return True
+    
+    def _activate_manual_override(self):
+        """Activate manual override for the configured duration."""
+        self.manual_override_active = True
+        self.manual_override_end_time = time.time() + MANUAL_OVERRIDE_DURATION
+        print(f"   🔒 Manual override activated for {MANUAL_OVERRIDE_DURATION} seconds")
+        logger.info(f"Manual override activated for {MANUAL_OVERRIDE_DURATION} seconds")
+        
+        import threading
+        def timeout_callback():
+            time.sleep(MANUAL_OVERRIDE_DURATION)
+            if self.manual_override_active:
+                self.manual_override_active = False
+                self.manual_override_end_time = None
+                print(f"\n⚠️  WARNING: Manual override expired - returning to automatic control")
+                print(f"   🔄 System will now resume automatic fan control based on temperature/humidity")
+                logger.warning("Manual override period expired, returning to automatic control")
+                
+                expiry_alarm = "Manual override expired - Automatic control resumed"
+                self._publish_alarm(expiry_alarm)
+                self.db_manager.store_alarm(expiry_alarm)
+        
+        timer_thread = threading.Thread(target=timeout_callback, daemon=True)
+        timer_thread.start()
     
     def _apply_hysteresis_logic(self, temperature: float, humidity: float):
         """
@@ -353,6 +459,10 @@ class ServerRoomDataManager:
             humidity: Current humidity in percentage
         """
         try:
+            if self._check_manual_override():
+                print(f"   ⚡ Relay status: {self.relay_status} (manual override)")
+                return
+            
             old_status = self.relay_status
             new_status = old_status
             

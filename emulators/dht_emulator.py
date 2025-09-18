@@ -4,7 +4,7 @@ DHT Sensor Emulator for Server Room Cooling Monitor
 
 This script emulates a DHT22 sensor by publishing simulated temperature and humidity
 readings to an MQTT broker. The readings are sent to the topic "server_room/sensor/dht"
-in JSON format every 20 seconds.
+in JSON format every 15 seconds.
 
 Temperature range: 20-35°C
 Humidity range: 30-80%
@@ -21,7 +21,7 @@ import paho.mqtt.client as mqtt
 MQTT_BROKER = "broker.hivemq.com"
 MQTT_PORT = 1883
 MQTT_TOPIC = "server_room/sensor/dht"
-PUBLISH_INTERVAL = 20  # seconds
+PUBLISH_INTERVAL = 15  # seconds
 
 # Sensor ranges
 TEMP_MIN = 20.0  # °C
@@ -181,7 +181,7 @@ class DHTEmulator:
         logger.info("Starting DHT22 Sensor Emulator...")
         logger.info(f"Temperature range: {TEMP_MIN}°C - {TEMP_MAX}°C")
         logger.info(f"Humidity range: {HUMIDITY_MIN}% - {HUMIDITY_MAX}%")
-        logger.info(f"Publishing interval: {PUBLISH_INTERVAL} seconds (20 sec for realistic server room monitoring)")
+        logger.info(f"Publishing interval: {PUBLISH_INTERVAL} seconds (15 sec for realistic server room monitoring)")
         logger.info(f"MQTT Topic: {MQTT_TOPIC}")
         
         # Connect to MQTT broker

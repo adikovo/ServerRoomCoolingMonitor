@@ -316,7 +316,7 @@ class ButtonControlPanel(QMainWindow):
         layout.setContentsMargins(15, 15, 15, 18)
         
         # Big toggle button
-        self.toggle_button = QPushButton("🔴 TURN ON FAN")
+        self.toggle_button = QPushButton("🟢 TURN ON FAN")
         self.toggle_button.setFont(QFont("Arial", 13, QFont.Bold))
         self.toggle_button.setFixedSize(180, 50)
         # Initial styling will be set in update_button_appearance method
@@ -433,31 +433,8 @@ class ButtonControlPanel(QMainWindow):
     def update_button_appearance(self):
         """Update button appearance based on fan status."""
         if self.fan_status == "ON":
-            # Fan is ON - show green button to turn OFF
-            self.toggle_button.setText("🟢 TURN OFF FAN")
-            self.toggle_button.setStyleSheet("""
-                QPushButton {
-                    background-color: #28a745;
-                    color: white;
-                    border: none;
-                    border-radius: 8px;
-                    font-weight: bold;
-                    font-size: 11px;
-                }
-                QPushButton:hover {
-                    background-color: #218838;
-                }
-                QPushButton:pressed {
-                    background-color: #1e7e34;
-                }
-                QPushButton:disabled {
-                    background-color: #95a5a6;
-                    color: #7f8c8d;
-                }
-            """)
-        else:
-            # Fan is OFF - show red button to turn ON
-            self.toggle_button.setText("🔴 TURN ON FAN")
+            # Fan is ON - show red button to turn OFF
+            self.toggle_button.setText("🔴 TURN OFF FAN")
             self.toggle_button.setStyleSheet("""
                 QPushButton {
                     background-color: #dc3545;
@@ -472,6 +449,29 @@ class ButtonControlPanel(QMainWindow):
                 }
                 QPushButton:pressed {
                     background-color: #bd2130;
+                }
+                QPushButton:disabled {
+                    background-color: #95a5a6;
+                    color: #7f8c8d;
+                }
+            """)
+        else:
+            # Fan is OFF - show green button to turn ON
+            self.toggle_button.setText("🟢 TURN ON FAN")
+            self.toggle_button.setStyleSheet("""
+                QPushButton {
+                    background-color: #28a745;
+                    color: white;
+                    border: none;
+                    border-radius: 8px;
+                    font-weight: bold;
+                    font-size: 11px;
+                }
+                QPushButton:hover {
+                    background-color: #218838;
+                }
+                QPushButton:pressed {
+                    background-color: #1e7e34;
                 }
                 QPushButton:disabled {
                     background-color: #95a5a6;

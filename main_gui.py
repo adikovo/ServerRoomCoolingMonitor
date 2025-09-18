@@ -625,9 +625,16 @@ class ServerRoomMonitorGUI(QMainWindow):
             except:
                 time_str = datetime.now().strftime('%H:%M:%S')
             
-            # Add to recent alarms display
-            alarm_text = f"[{time_str}] {message}\n"
-            self.recent_alarms_text.append(alarm_text)
+            clean_message = self._clean_alarm_message(message)
+            
+            if "Manual override expired" in message:
+                alarm_text = f"[{time_str}] TIMEOUT: {clean_message}"
+                self.recent_alarms_text.setTextColor(QColor("#e74c3c"))
+                self.recent_alarms_text.append(alarm_text)
+                self.recent_alarms_text.setTextColor(QColor("#2c3e50"))
+            else:
+                alarm_text = f"[{time_str}] {clean_message}"
+                self.recent_alarms_text.append(alarm_text)
             
             # Keep only last 10 alarms in recent display
             content = self.recent_alarms_text.toPlainText()
@@ -645,6 +652,30 @@ class ServerRoomMonitorGUI(QMainWindow):
             
         except Exception as e:
             print(f"Error adding alarm message: {e}")
+    
+    def _clean_alarm_message(self, message):
+        """Clean up alarm message for better display in GUI."""
+        try:
+            clean_msg = message.replace('🚨', '').replace('⚠️', '').replace('🔄', '')
+            clean_msg = clean_msg.replace('📤', '').replace('🔒', '').replace('⚡', '')
+            clean_msg = clean_msg.replace('🌡️', 'Temp').replace('💧', 'Humidity')
+            clean_msg = clean_msg.replace('°C', 'C').replace('%', 'pct')
+            
+            clean_msg = ' '.join(clean_msg.split())
+            if "Manual button toggle" in clean_msg:
+                parts = clean_msg.split(' - ')
+                if len(parts) >= 2:
+                    clean_msg = f"Manual: {parts[0].split(':')[1].strip()}"
+            elif "Manual override expired" in clean_msg:
+                clean_msg = "Manual override expired - Auto control resumed"
+            elif "Cooling fan turned" in clean_msg:
+                pass  
+            
+            return clean_msg.strip()
+            
+        except Exception as e:
+            print(f"Error cleaning alarm message: {e}")
+            return message
     
     def update_connection_status(self, connected):
         """Update MQTT connection status."""
