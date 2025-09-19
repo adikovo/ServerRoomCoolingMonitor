@@ -19,7 +19,7 @@ import json
 import sqlite3
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional
 
 import paho.mqtt.client as mqtt
@@ -34,6 +34,7 @@ from PyQt5.QtGui import QFont, QPalette, QColor
 # Configuration
 MQTT_BROKER = "broker.hivemq.com"
 MQTT_PORT = 1883
+MQTT_KEEPALIVE = 60
 
 # MQTT Topics
 TOPIC_SENSOR_DHT = "server_room/sensor/dht"
@@ -60,6 +61,8 @@ class MQTTWorker(QObject):
     def __init__(self):
         super().__init__()
         self.client = mqtt.Client()
+        # Configure client for better stability
+        self.client.max_inflight_messages_set(20)
         self.is_connected = False
         
         # Set up MQTT callbacks
@@ -113,7 +116,7 @@ class MQTTWorker(QObject):
                 except json.JSONDecodeError:
                     # Handle simple string alarms
                     alarm_data = {
-                        "timestamp": datetime.now().isoformat(),
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
                         "message": payload,
                         "level": "info"
                     }
@@ -125,7 +128,7 @@ class MQTTWorker(QObject):
     def connect_to_broker(self):
         """Connect to the MQTT broker."""
         try:
-            self.client.connect(MQTT_BROKER, MQTT_PORT, 60)
+            self.client.connect(MQTT_BROKER, MQTT_PORT, MQTT_KEEPALIVE)
             self.client.loop_start()
         except Exception as e:
             print(f"Error connecting to MQTT broker: {e}")
@@ -603,7 +606,7 @@ class ServerRoomMonitorGUI(QMainWindow):
     def add_alarm_message(self, alarm_data):
         """Add new alarm message."""
         try:
-            timestamp = alarm_data.get('timestamp', datetime.now().isoformat())
+            timestamp = alarm_data.get('timestamp', datetime.now(timezone.utc).isoformat())
             message = alarm_data.get('message', 'Unknown alarm')
             level = alarm_data.get('level', 'info')
             
@@ -620,9 +623,27 @@ class ServerRoomMonitorGUI(QMainWindow):
             
             # Format timestamp for display
             try:
-                dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-                time_str = dt.strftime('%H:%M:%S')
-            except:
+                # Handle different timestamp formats
+                if 'T' in timestamp and ('+' in timestamp or 'Z' in timestamp):
+                    # ISO format with timezone info
+                    dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                    if dt.tzinfo is not None:
+                        local_dt = dt.astimezone()
+                    else:
+                        utc_dt = dt.replace(tzinfo=timezone.utc)
+                        local_dt = utc_dt.astimezone()
+                elif 'T' in timestamp:
+                    # ISO format without timezone - assume it's already local time
+                    dt = datetime.fromisoformat(timestamp)
+                    local_dt = dt  # Already local time
+                else:
+                    # Simple format like "2025-09-19 13:03:00" - assume it's already local time
+                    dt = datetime.strptime(timestamp, '%Y-%m-%d %H:%M:%S')
+                    local_dt = dt  # Already local time
+                
+                time_str = local_dt.strftime('%H:%M:%S')
+            except Exception as e:
+                print(f"Debug: Error parsing timestamp '{timestamp}': {e}")
                 time_str = datetime.now().strftime('%H:%M:%S')
             
             clean_message = self._clean_alarm_message(message)
@@ -718,8 +739,7 @@ class ServerRoomMonitorGUI(QMainWindow):
             with sqlite3.connect(DATABASE_FILE) as conn:
                 cursor = conn.cursor()
                 cursor.execute('''
-                    SELECT id, datetime(timestamp, 'localtime') as local_time, 
-                           temperature, humidity 
+                    SELECT id, timestamp, temperature, humidity 
                     FROM sensor_data 
                     ORDER BY timestamp DESC 
                     LIMIT 100
@@ -731,7 +751,31 @@ class ServerRoomMonitorGUI(QMainWindow):
                 
                 for row_idx, row_data in enumerate(data):
                     for col_idx, cell_data in enumerate(row_data):
-                        if col_idx == 2 or col_idx == 3:  # Temperature and humidity columns
+                        if col_idx == 1:  # Timestamp column - convert to local time
+                            try:
+                                # Handle different timestamp formats
+                                if 'T' in cell_data and ('+' in cell_data or 'Z' in cell_data):
+                                    # ISO format with timezone info
+                                    dt = datetime.fromisoformat(cell_data.replace('Z', '+00:00'))
+                                    if dt.tzinfo is not None:
+                                        local_dt = dt.astimezone()
+                                    else:
+                                        utc_dt = dt.replace(tzinfo=timezone.utc)
+                                        local_dt = utc_dt.astimezone()
+                                elif 'T' in cell_data:
+                                    # ISO format without timezone - assume it's already local time
+                                    dt = datetime.fromisoformat(cell_data)
+                                    local_dt = dt  # Already local time
+                                else:
+                                    # Simple format - assume it's already local time
+                                    dt = datetime.strptime(cell_data, '%Y-%m-%d %H:%M:%S')
+                                    local_dt = dt  # Already local time
+                                
+                                cell_data = local_dt.strftime('%Y-%m-%d %H:%M:%S')
+                            except:
+                                # Fallback: keep original timestamp
+                                pass
+                        elif col_idx == 2 or col_idx == 3:  # Temperature and humidity columns
                             cell_data = f"{float(cell_data):.1f}"
                         
                         item = QTableWidgetItem(str(cell_data))
@@ -749,7 +793,7 @@ class ServerRoomMonitorGUI(QMainWindow):
             with sqlite3.connect(DATABASE_FILE) as conn:
                 cursor = conn.cursor()
                 cursor.execute('''
-                    SELECT id, datetime(timestamp, 'localtime') as local_time, message 
+                    SELECT id, timestamp, message 
                     FROM alarms 
                     ORDER BY timestamp DESC 
                     LIMIT 50
@@ -761,6 +805,31 @@ class ServerRoomMonitorGUI(QMainWindow):
                 
                 for row_idx, row_data in enumerate(data):
                     for col_idx, cell_data in enumerate(row_data):
+                        if col_idx == 1:  # Timestamp column - convert to local time
+                            try:
+                                # Handle different timestamp formats
+                                if 'T' in cell_data and ('+' in cell_data or 'Z' in cell_data):
+                                    # ISO format with timezone info
+                                    dt = datetime.fromisoformat(cell_data.replace('Z', '+00:00'))
+                                    if dt.tzinfo is not None:
+                                        local_dt = dt.astimezone()
+                                    else:
+                                        utc_dt = dt.replace(tzinfo=timezone.utc)
+                                        local_dt = utc_dt.astimezone()
+                                elif 'T' in cell_data:
+                                    # ISO format without timezone - assume it's already local time
+                                    dt = datetime.fromisoformat(cell_data)
+                                    local_dt = dt  # Already local time
+                                else:
+                                    # Simple format - assume it's already local time
+                                    dt = datetime.strptime(cell_data, '%Y-%m-%d %H:%M:%S')
+                                    local_dt = dt  # Already local time
+                                
+                                cell_data = local_dt.strftime('%Y-%m-%d %H:%M:%S')
+                            except:
+                                # Fallback: keep original timestamp
+                                pass
+                        
                         item = QTableWidgetItem(str(cell_data))
                         self.alarms_table.setItem(row_idx, col_idx, item)
                 

@@ -19,13 +19,18 @@ import json
 import sqlite3
 import time
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional, Tuple
 import paho.mqtt.client as mqtt
 
 # Configuration
 MQTT_BROKER = "broker.hivemq.com"
 MQTT_PORT = 1883
+
+# MQTT Connection settings for better stability
+MQTT_KEEPALIVE = 60
+MQTT_RECONNECT_DELAY_MIN = 1
+MQTT_RECONNECT_DELAY_MAX = 30
 
 # MQTT Topics
 TOPIC_SENSOR_DHT = "server_room/sensor/dht"
@@ -110,7 +115,8 @@ class DatabaseManager:
             True if successful, False otherwise
         """
         try:
-            timestamp = datetime.now().isoformat()
+            # Store timestamp in UTC for consistency
+            timestamp = datetime.now(timezone.utc).isoformat()
             
             with sqlite3.connect(self.db_file) as conn:
                 cursor = conn.cursor()
@@ -138,7 +144,8 @@ class DatabaseManager:
             True if successful, False otherwise
         """
         try:
-            timestamp = datetime.now().isoformat()
+            # Store timestamp in UTC for consistency
+            timestamp = datetime.now(timezone.utc).isoformat()
             
             with sqlite3.connect(self.db_file) as conn:
                 cursor = conn.cursor()
@@ -195,6 +202,10 @@ class ServerRoomDataManager:
         self.broker = broker
         self.port = port
         self.client = mqtt.Client("IOT_DATA_MANAGER_ADI_7708", clean_session=True)
+        
+        # Configure client for better stability
+        self.client.max_inflight_messages_set(20)
+        self.client.max_queued_messages_set(0)
         self.is_connected = False
         
         # System state
@@ -545,9 +556,9 @@ class ServerRoomDataManager:
                 logger.warning("Not connected to MQTT broker. Cannot publish alarm.")
                 return False
             
-            # Create alarm data with timestamp
+            # Create alarm data with timestamp in UTC
             alarm_data = {
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "message": message,
                 "level": "warning"
             }
@@ -578,7 +589,7 @@ class ServerRoomDataManager:
         """
         try:
             logger.info(f"Connecting to MQTT broker at {self.broker}:{self.port}...")
-            self.client.connect(self.broker, self.port)
+            self.client.connect(self.broker, self.port, MQTT_KEEPALIVE)
             self.client.loop_start()
             
             # Wait for connection to be established
