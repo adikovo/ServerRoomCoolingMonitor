@@ -610,10 +610,12 @@ class ServerRoomMonitorGUI(QMainWindow):
             message = alarm_data.get('message', 'Unknown alarm')
             level = alarm_data.get('level', 'info')
             
-            # Check for duplicate alarm messages
+            print(f"📨 Received alarm: {message[:50]}...")
+            
+            # Check for duplicate alarm messages (only filter rapid duplicates)
             current_time = time.time()
             if (self.last_alarm_message == message and 
-                current_time - self.last_alarm_time < 2.0):  # 2 second window
+                current_time - self.last_alarm_time < 0.5):  # 0.5 second window for true duplicates
                 print(f"Duplicate alarm filtered: {message}")
                 return  # Skip duplicate
             
